@@ -53,24 +53,61 @@ app.post('/api/file/action', async (req, res) => {
     const promptText = (prompt || '').toLowerCase();
     const isImageGen = /сгенерируй фото|создай картинк|generate image|create image|создай изображен|generate picture/.test(promptText);
     if (isImageGen) {
-      // Генерация изображения через DALL-E
-      const dalleResp = await openai.images.generate({
-        model: 'dall-e-3',
-        prompt: prompt,
-        n: 1,
-        size: '1024x1024'
-      });
-      const dalleUrl = dalleResp.data[0]?.url;
-      if (dalleUrl) {
-        // Скачиваем и сохраняем изображение
-        const imgRes = await fetch(dalleUrl);
-        const buffer = await imgRes.arrayBuffer();
-        const imgName = 'generated-' + Date.now() + '.png';
-        const imgPath = path.join(__dirname, 'uploads', imgName);
-        fs.writeFileSync(imgPath, Buffer.from(buffer));
-        return res.json({ imageUrl: `/uploads/${imgName}`, dalleUrl });
-      } else {
-        return res.status(500).json({ error: 'Не удалось сгенерировать изображение' });
+      try {
+        // Генерация изображения через DALL-E
+        const dalleResp = await openai.images.generate({
+          model: 'dall-e-3',
+          prompt: prompt,
+          n: 1,
+          size: '1024x1024'
+        });
+        
+        // Логируем полный ответ от DALL-E для отладки
+        console.log('DALL-E Response:', JSON.stringify(dalleResp, null, 2));
+        
+        const dalleUrl = dalleResp.data[0]?.url;
+        if (dalleUrl) {
+          // Скачиваем и сохраняем изображение
+          const imgRes = await fetch(dalleUrl);
+          const buffer = await imgRes.arrayBuffer();
+          const imgName = 'generated-' + Date.now() + '.png';
+          const imgPath = path.join(__dirname, 'uploads', imgName);
+          fs.writeFileSync(imgPath, Buffer.from(buffer));
+          return res.json({ 
+            imageUrl: `/uploads/${imgName}`, 
+            dalleUrl,
+            dalleResponse: dalleResp // Временно включаем полный ответ для отладки
+          });
+        } else {
+          console.error('DALL-E Error: No URL in response', dalleResp);
+          return res.status(500).json({ 
+            error: 'Не удалось сгенерировать изображение',
+            details: 'DALL-E не вернул URL изображения'
+          });
+        }
+      } catch (error) {
+        console.error('DALL-E Error:', error);
+        
+        // Определяем тип ошибки и возвращаем понятное сообщение
+        let errorMessage = 'Ошибка при генерации изображения';
+        let errorDetails = error.message || 'Неизвестная ошибка';
+        
+        if (error.response?.status === 429) {
+          errorMessage = 'Превышен лимит запросов к DALL-E';
+          errorDetails = 'Пожалуйста, подождите немного и попробуйте снова';
+        } else if (error.response?.status === 400) {
+          errorMessage = 'Запрос отклонён';
+          errorDetails = 'Пожалуйста, измените описание изображения';
+        } else if (error.message?.includes('content_policy')) {
+          errorMessage = 'Запрос отклонён модерацией';
+          errorDetails = 'Описание изображения нарушает правила использования';
+        }
+        
+        return res.status(500).json({ 
+          error: errorMessage,
+          details: errorDetails,
+          fullError: error // Временно включаем полную ошибку для отладки
+        });
       }
     }
     const uploadsDir = path.join(__dirname, 'uploads');
