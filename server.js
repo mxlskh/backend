@@ -79,25 +79,51 @@ function splitTextIntoChunks(text, maxTokens = 4000) {
   return chunks;
 }
 
-// Функция для обработки текста через GPT
-async function processTextWithGPT(text, prompt, model = 'gpt-4') {
+// Функция для ожидания с экспоненциальной задержкой
+async function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Функция для обработки текста через GPT с повторными попытками
+async function processTextWithGPT(text, prompt, model = 'gpt-4', maxRetries = 3) {
   const chunks = splitTextIntoChunks(text);
   let results = [];
+  let retryCount = 0;
+  let baseDelay = 1000; // Начальная задержка 1 секунда
   
   for (const chunk of chunks) {
-    const gptResp = await openai.chat.completions.create({
-      model: model,
-      messages: [
-        { role: 'system', content: prompt },
-        { role: 'user', content: chunk }
-      ],
-      max_tokens: 2000
-    });
+    let success = false;
+    while (!success && retryCount < maxRetries) {
+      try {
+        const gptResp = await openai.chat.completions.create({
+          model: model,
+          messages: [
+            { role: 'system', content: prompt },
+            { role: 'user', content: chunk }
+          ],
+          max_tokens: 2000
+        });
+        
+        results.push(gptResp.choices[0]?.message?.content || '');
+        success = true;
+        
+        // Добавляем небольшую задержку между успешными запросами
+        await wait(1000);
+      } catch (error) {
+        if (error.code === 'rate_limit_exceeded') {
+          retryCount++;
+          const delay = baseDelay * Math.pow(2, retryCount - 1); // Экспоненциальная задержка
+          console.log(`Rate limit hit, retrying in ${delay}ms (attempt ${retryCount}/${maxRetries})`);
+          await wait(delay);
+        } else {
+          throw error; // Если ошибка не связана с лимитом, пробрасываем её дальше
+        }
+      }
+    }
     
-    results.push(gptResp.choices[0]?.message?.content || '');
-    
-    // Добавляем небольшую задержку между запросами
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (!success) {
+      throw new Error(`Failed to process chunk after ${maxRetries} retries`);
+    }
   }
   
   return results.join('\n\n');
