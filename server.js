@@ -5,6 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const { OpenAI } = require('openai');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const pdfParse = require('pdf-parse');
+const { PDFDocument } = require('pdf-lib');
 require('dotenv').config();
 
 const app = express();
@@ -27,77 +29,140 @@ app.post('/api/file', upload.single('file'), async (req, res) => {
   try {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
-
-    const mime = file.mimetype;
-    let text = '';
-    let correctedUrl = null;
-
-    if (mime.startsWith('image/')) {
-      // 1. Анализ изображения через GPT-4 Vision
-      const imgData = fs.readFileSync(file.path);
-      const base64 = imgData.toString('base64');
-      const visionResp = await openai.chat.completions.create({
-        model: 'gpt-4-vision-preview',
-        messages: [
-          { role: 'system', content: 'Опиши изображение и исправь ошибки, если есть текст.' },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: 'Что на этом изображении? Исправь ошибки в тексте, если они есть.' },
-              { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } }
-            ]
-          }
-        ],
-        max_tokens: 500
-      });
-      text = visionResp.choices[0]?.message?.content || '';
-
-      // 2. Генерация исправленного изображения через DALL-E 3
-      if (text) {
-        const dalleResp = await openai.images.generate({
-          model: 'dall-e-3',
-          prompt: `Сгенерируй изображение с текстом: "${text}". Используй стиль оригинального изображения.`,
-          n: 1,
-          size: '1024x1024'
-        });
-        const dalleUrl = dalleResp.data[0]?.url;
-        if (dalleUrl) {
-          const imgRes = await fetch(dalleUrl);
-          const buffer = await imgRes.arrayBuffer();
-          const correctedName = 'corrected-' + Date.now() + '.png';
-          const correctedPath = path.join(UPLOADS_DIR, correctedName);
-          fs.writeFileSync(correctedPath, Buffer.from(buffer));
-          correctedUrl = `/uploads/${correctedName}`;
-        }
-      }
-    } else if (mime === 'text/plain') {
-      text = fs.readFileSync(file.path, 'utf8');
-      const gptResp = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: 'Исправь ошибки и отредактируй текст.' },
-          { role: 'user', content: text }
-        ],
-        max_tokens: 2000
-      });
-      const correctedText = gptResp.choices[0]?.message?.content || '';
-      const ext = path.extname(file.originalname) || '.txt';
-      const correctedName = 'corrected-' + Date.now() + ext;
-      const correctedPath = path.join(UPLOADS_DIR, correctedName);
-      fs.writeFileSync(correctedPath, correctedText, 'utf8');
-      correctedUrl = `/uploads/${correctedName}`;
-    }
-
     res.json({
+      fileId: file.filename,
       url: `/uploads/${file.filename}`,
-      fileName: file.originalname,
-      fileType: mime,
-      text,
-      correctedUrl: correctedUrl ? correctedUrl : undefined
+      name: file.originalname,
+      type: file.mimetype
     });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: 'Ошибка при обработке файла' });
+    res.status(500).json({ error: 'Ошибка при сохранении файла' });
+  }
+});
+
+// Новый endpoint для обработки файла по действию пользователя
+app.post('/api/file/action', async (req, res) => {
+  try {
+    const { fileId, action, prompt } = req.body;
+    if (!fileId || !action) {
+      return res.status(400).json({ error: 'fileId and action are required' });
+    }
+    const uploadsDir = path.join(__dirname, 'uploads');
+    const filePath = path.join(uploadsDir, fileId);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = (ext === '.pdf') ? 'application/pdf' : '';
+    let result = {};
+    if (ext === '.pdf') {
+      // --- PDF обработка ---
+      const dataBuffer = fs.readFileSync(filePath);
+      const pdfData = await pdfParse(dataBuffer);
+      const originalText = pdfData.text;
+      if (!originalText.trim()) {
+        return res.status(400).json({ error: 'Не удалось извлечь текст из PDF' });
+      }
+      let gptPrompt = '';
+      if (action === 'fix') gptPrompt = 'Исправь ошибки в тексте.';
+      else if (action === 'translate') gptPrompt = prompt || 'Переведи текст на английский.';
+      else if (action === 'analyze') gptPrompt = prompt || 'Проанализируй текст и дай краткое резюме.';
+      else if (action === 'custom') gptPrompt = prompt || '';
+      else return res.status(400).json({ error: 'Unknown action' });
+      const gptResp = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: gptPrompt },
+          { role: 'user', content: originalText }
+        ],
+        max_tokens: 2000
+      });
+      const gptText = gptResp.choices[0]?.message?.content || '';
+      if (action === 'analyze') {
+        result = { analysis: gptText };
+      } else {
+        // Генерируем новый PDF с gptText
+        const pdfDoc = await PDFDocument.create();
+        const page = pdfDoc.addPage();
+        const fontSize = 12;
+        const { width, height } = page.getSize();
+        const lines = gptText.split('\n');
+        let y = height - 40;
+        for (const line of lines) {
+          page.drawText(line, { x: 40, y, size: fontSize });
+          y -= fontSize + 4;
+          if (y < 40) {
+            y = height - 40;
+            pdfDoc.addPage();
+          }
+        }
+        const pdfBytes = await pdfDoc.save();
+        const newPdfName = fileId.replace(ext, '') + `_${action}` + ext;
+        const newPdfPath = path.join(uploadsDir, newPdfName);
+        fs.writeFileSync(newPdfPath, pdfBytes);
+        result = {
+          [`${action}Url`]: `/uploads/${newPdfName}`,
+          text: gptText
+        };
+      }
+    } else {
+      // --- Старый код для текстовых файлов ---
+      if (action === 'fix') {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const fixed = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: 'Исправь ошибки в тексте.' },
+            { role: 'user', content: content }
+          ]
+        });
+        const fixedText = fixed.choices[0].message.content;
+        const fixedFileName = fileId.replace(ext, '') + '_fixed' + ext;
+        const fixedFilePath = path.join(uploadsDir, fixedFileName);
+        fs.writeFileSync(fixedFilePath, fixedText, 'utf8');
+        result = {
+          correctedUrl: `/uploads/${fixedFileName}`,
+          text: fixedText
+        };
+      } else if (action === 'translate') {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const translation = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: prompt || 'Переведи текст на английский.' },
+            { role: 'user', content: content }
+          ]
+        });
+        const translatedText = translation.choices[0].message.content;
+        const translatedFileName = fileId.replace(ext, '') + '_translated' + ext;
+        const translatedFilePath = path.join(uploadsDir, translatedFileName);
+        fs.writeFileSync(translatedFilePath, translatedText, 'utf8');
+        result = {
+          translatedUrl: `/uploads/${translatedFileName}`,
+          text: translatedText
+        };
+      } else if (action === 'analyze') {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const analysis = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: prompt || 'Проанализируй текст и дай краткое резюме.' },
+            { role: 'user', content: content }
+          ]
+        });
+        const analysisText = analysis.choices[0].message.content;
+        result = {
+          analysis: analysisText
+        };
+      } else {
+        return res.status(400).json({ error: 'Unknown action' });
+      }
+    }
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to process file action' });
   }
 });
 
