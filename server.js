@@ -52,9 +52,22 @@ app.post('/api/file/action', async (req, res) => {
     // --- Генерация изображения по prompt ---
     const promptText = (prompt || '').toLowerCase();
     const isImageGen = /сгенерируй фото|создай картинк|generate image|create image|создай изображен|generate picture/.test(promptText);
+    
+    console.log('Image request:', { promptText, isImageGen, prompt });
+    
     if (isImageGen) {
       try {
+        // Проверяем, что prompt не пустой
+        if (!prompt || prompt.trim().length < 3) {
+          console.error('Empty or too short prompt:', prompt);
+          return res.status(400).json({ 
+            error: 'Неверный запрос',
+            details: 'Описание изображения слишком короткое или пустое'
+          });
+        }
+
         // Генерация изображения через DALL-E
+        console.log('Calling DALL-E with prompt:', prompt);
         const dalleResp = await openai.images.generate({
           model: 'dall-e-3',
           prompt: prompt,
@@ -67,12 +80,21 @@ app.post('/api/file/action', async (req, res) => {
         
         const dalleUrl = dalleResp.data[0]?.url;
         if (dalleUrl) {
+          console.log('DALL-E URL received:', dalleUrl);
           // Скачиваем и сохраняем изображение
           const imgRes = await fetch(dalleUrl);
+          if (!imgRes.ok) {
+            console.error('Failed to download image:', imgRes.status, imgRes.statusText);
+            return res.status(500).json({ 
+              error: 'Ошибка при сохранении изображения',
+              details: 'Не удалось скачать сгенерированное изображение'
+            });
+          }
           const buffer = await imgRes.arrayBuffer();
           const imgName = 'generated-' + Date.now() + '.png';
           const imgPath = path.join(__dirname, 'uploads', imgName);
           fs.writeFileSync(imgPath, Buffer.from(buffer));
+          console.log('Image saved:', imgPath);
           return res.json({ 
             imageUrl: `/uploads/${imgName}`, 
             dalleUrl,
@@ -87,6 +109,11 @@ app.post('/api/file/action', async (req, res) => {
         }
       } catch (error) {
         console.error('DALL-E Error:', error);
+        console.error('Error details:', {
+          message: error.message,
+          status: error.response?.status,
+          data: error.response?.data
+        });
         
         // Определяем тип ошибки и возвращаем понятное сообщение
         let errorMessage = 'Ошибка при генерации изображения';
