@@ -1,13 +1,19 @@
-const express = require('express');
-const multer = require('multer');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-const { OpenAI } = require('openai');
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-const pdfParse = require('pdf-parse');
-const { PDFDocument } = require('pdf-lib');
-require('dotenv').config();
+import express from 'express';
+import multer from 'multer';
+import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { OpenAI } from 'openai';
+import fetch from 'node-fetch';
+import pdfParse from 'pdf-parse';
+import { PDFDocument } from 'pdf-lib';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
