@@ -35,7 +35,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const pdfExtract = new PDFExtract();
 
 // Функция для разбиения текста на части по токенам (точно)
-function splitTextIntoChunks(text, maxTokens = 8000) {
+function splitTextIntoChunks(text, maxTokens = 6000) {
   const tokens = encode(text);
   const chunks = [];
   for (let i = 0; i < tokens.length; i += maxTokens) {
@@ -67,7 +67,7 @@ async function processTextWithGPT(text, prompt, model = 'gpt-4', maxRetries = 3)
             { role: 'system', content: prompt },
             { role: 'user', content: chunk }
           ],
-          max_tokens: 2000
+          max_tokens: 1000
         });
         
         results.push(gptResp.choices[0]?.message?.content || '');
