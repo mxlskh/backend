@@ -33,6 +33,76 @@ const upload = multer({ storage });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const pdfExtract = new PDFExtract();
 
+// Функция для разбиения текста на части по токенам
+function splitTextIntoChunks(text, maxTokens = 4000) {
+  // Примерная оценка: 1 токен ≈ 4 символа
+  const charsPerChunk = maxTokens * 4;
+  const chunks = [];
+  let currentChunk = '';
+  
+  // Разбиваем текст на предложения
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  
+  for (const sentence of sentences) {
+    if ((currentChunk + sentence).length > charsPerChunk) {
+      if (currentChunk) {
+        chunks.push(currentChunk.trim());
+        currentChunk = '';
+      }
+      // Если предложение слишком длинное, разбиваем его
+      if (sentence.length > charsPerChunk) {
+        const words = sentence.split(/\s+/);
+        let tempChunk = '';
+        for (const word of words) {
+          if ((tempChunk + word).length > charsPerChunk) {
+            chunks.push(tempChunk.trim());
+            tempChunk = word;
+          } else {
+            tempChunk += (tempChunk ? ' ' : '') + word;
+          }
+        }
+        if (tempChunk) {
+          currentChunk = tempChunk;
+        }
+      } else {
+        currentChunk = sentence;
+      }
+    } else {
+      currentChunk += (currentChunk ? ' ' : '') + sentence;
+    }
+  }
+  
+  if (currentChunk) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks;
+}
+
+// Функция для обработки текста через GPT
+async function processTextWithGPT(text, prompt, model = 'gpt-4') {
+  const chunks = splitTextIntoChunks(text);
+  let results = [];
+  
+  for (const chunk of chunks) {
+    const gptResp = await openai.chat.completions.create({
+      model: model,
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: chunk }
+      ],
+      max_tokens: 2000
+    });
+    
+    results.push(gptResp.choices[0]?.message?.content || '');
+    
+    // Добавляем небольшую задержку между запросами
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  
+  return results.join('\n\n');
+}
+
 // Генерация изображения через DALL-E
 app.post('/api/generate-image', async (req, res) => {
   try {
@@ -132,16 +202,7 @@ app.post('/api/file/action', async (req, res) => {
         else if (action === 'custom') gptPrompt = prompt || '';
         else return res.status(400).json({ error: 'Unknown action' });
 
-        const gptResp = await openai.chat.completions.create({
-          model: 'gpt-4',
-          messages: [
-            { role: 'system', content: gptPrompt },
-            { role: 'user', content: originalText }
-          ],
-          max_tokens: 2000
-        });
-
-        const gptText = gptResp.choices[0]?.message?.content || '';
+        const gptText = await processTextWithGPT(originalText, gptPrompt);
 
         if (action === 'analyze') {
           result = { analysis: gptText };
@@ -190,15 +251,7 @@ app.post('/api/file/action', async (req, res) => {
       else if (action === 'custom') gptPrompt = prompt || '';
       else return res.status(400).json({ error: 'Unknown action' });
 
-      const gptResp = await openai.chat.completions.create({
-        model: 'gpt-4',
-        messages: [
-          { role: 'system', content: gptPrompt },
-          { role: 'user', content: content }
-        ]
-      });
-
-      const gptText = gptResp.choices[0]?.message?.content || '';
+      const gptText = await processTextWithGPT(content, gptPrompt);
 
       if (action === 'analyze') {
         result = { analysis: gptText };
