@@ -270,6 +270,55 @@ app.post('/api/file/action', async (req, res) => {
   }
 });
 
+// Генерация изображения через DALL-E
+app.post('/api/generate-image', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    console.log('DALL-E request:', { prompt });
+
+    if (!prompt) {
+      return res.status(400).json({ error: 'Prompt is required' });
+    }
+
+    const response = await openai.images.generate({
+      model: "dall-e-3",
+      prompt: prompt,
+      n: 1,
+      size: "1024x1024",
+      quality: "standard",
+      style: "natural"
+    });
+
+    console.log('DALL-E response:', response);
+    
+    // Скачиваем и сохраняем изображение
+    const dalleUrl = response.data[0]?.url;
+    if (dalleUrl) {
+      const imgRes = await fetch(dalleUrl);
+      if (!imgRes.ok) {
+        throw new Error('Failed to download generated image');
+      }
+      const buffer = await imgRes.arrayBuffer();
+      const imgName = 'generated-' + Date.now() + '.png';
+      const imgPath = path.join(UPLOADS_DIR, imgName);
+      fs.writeFileSync(imgPath, Buffer.from(buffer));
+      
+      res.json({ 
+        imageUrl: `/uploads/${imgName}`,
+        dalleUrl
+      });
+    } else {
+      throw new Error('No URL in DALL-E response');
+    }
+  } catch (error) {
+    console.error('DALL-E Error:', error);
+    res.status(500).json({ 
+      error: 'Ошибка при генерации изображения',
+      details: error.message
+    });
+  }
+});
+
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.get('/', (req, res) => res.send('File AI backend is running!'));
 app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
