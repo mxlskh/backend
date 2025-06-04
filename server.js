@@ -51,15 +51,24 @@ app.post('/api/file/action', async (req, res) => {
     }
     // --- Генерация изображения по prompt ---
     const promptText = (prompt || '').toLowerCase();
-    const isImageGen = /сгенерируй фото|создай картинк|generate image|create image|создай изображен|generate picture/.test(promptText);
+    console.log('Received request:', { promptText, prompt, action });
     
-    console.log('Image request:', { promptText, isImageGen, prompt });
+    // Проверяем, является ли это запросом на генерацию изображения
+    const isImageGen = /сгенерируй фото|создай картинк|generate image|create image|создай изображен|generate picture/.test(promptText);
+    console.log('Is image generation request:', isImageGen);
     
     if (isImageGen) {
       try {
-        // Проверяем, что prompt не пустой
-        if (!prompt || prompt.trim().length < 3) {
-          console.error('Empty or too short prompt:', prompt);
+        // Извлекаем описание изображения из prompt
+        const imageDescription = promptText
+          .replace(/сгенерируй фото|создай картинк|generate image|create image|создай изображен|generate picture/g, '')
+          .trim();
+        
+        console.log('Extracted image description:', imageDescription);
+        
+        // Проверяем, что описание не пустое
+        if (!imageDescription || imageDescription.length < 3) {
+          console.error('Empty or too short image description:', imageDescription);
           return res.status(400).json({ 
             error: 'Неверный запрос',
             details: 'Описание изображения слишком короткое или пустое'
@@ -67,10 +76,10 @@ app.post('/api/file/action', async (req, res) => {
         }
 
         // Генерация изображения через DALL-E
-        console.log('Calling DALL-E with prompt:', prompt);
+        console.log('Calling DALL-E with description:', imageDescription);
         const dalleResp = await openai.images.generate({
           model: 'dall-e-3',
-          prompt: prompt,
+          prompt: imageDescription,
           n: 1,
           size: '1024x1024'
         });
