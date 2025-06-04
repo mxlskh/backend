@@ -46,8 +46,32 @@ app.post('/api/file', upload.single('file'), async (req, res) => {
 app.post('/api/file/action', async (req, res) => {
   try {
     const { fileId, action, prompt } = req.body;
-    if (!fileId || !action) {
+    if (!fileId && !(action === 'custom' && prompt)) {
       return res.status(400).json({ error: 'fileId and action are required' });
+    }
+    // --- Генерация изображения по prompt ---
+    const promptText = (prompt || '').toLowerCase();
+    const isImageGen = /сгенерируй фото|создай картинк|generate image|create image|создай изображен|generate picture/.test(promptText);
+    if (isImageGen) {
+      // Генерация изображения через DALL-E
+      const dalleResp = await openai.images.generate({
+        model: 'dall-e-3',
+        prompt: prompt,
+        n: 1,
+        size: '1024x1024'
+      });
+      const dalleUrl = dalleResp.data[0]?.url;
+      if (dalleUrl) {
+        // Скачиваем и сохраняем изображение
+        const imgRes = await fetch(dalleUrl);
+        const buffer = await imgRes.arrayBuffer();
+        const imgName = 'generated-' + Date.now() + '.png';
+        const imgPath = path.join(__dirname, 'uploads', imgName);
+        fs.writeFileSync(imgPath, Buffer.from(buffer));
+        return res.json({ imageUrl: `/uploads/${imgName}`, dalleUrl });
+      } else {
+        return res.status(500).json({ error: 'Не удалось сгенерировать изображение' });
+      }
     }
     const uploadsDir = path.join(__dirname, 'uploads');
     const filePath = path.join(uploadsDir, fileId);
