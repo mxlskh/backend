@@ -20,7 +20,8 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
@@ -29,7 +30,7 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOADS_DIR),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
-const upload = multer({ storage });
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const pdfExtract = new PDFExtract();
@@ -147,17 +148,20 @@ app.post('/api/generate-image', async (req, res) => {
 // Обработка файлов
 app.post('/api/file', upload.single('file'), async (req, res) => {
   try {
-    const file = req.file;
-    if (!file) return res.status(400).json({ error: 'No file uploaded' });
+    console.log('POST /api/file', req.file);
+    if (!req.file) {
+      console.error('No file uploaded!');
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
     res.json({
-      fileId: file.filename,
-      url: `/uploads/${file.filename}`,
-      name: file.originalname,
-      type: file.mimetype
+      fileId: req.file.filename,
+      url: `/uploads/${req.file.filename}`,
+      name: req.file.originalname,
+      type: req.file.mimetype
     });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Ошибка при сохранении файла' });
+    console.error('Ошибка при сохранении файла:', e);
+    res.status(500).json({ error: 'Ошибка при сохранении файла', details: e.message });
   }
 });
 
