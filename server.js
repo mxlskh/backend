@@ -10,6 +10,7 @@ import { PDFExtract } from 'pdf.js-extract';
 import { PDFDocument } from 'pdf-lib';
 import dotenv from 'dotenv';
 import { encode, decode } from 'gpt-3-encoder';
+import { Readable } from 'stream';
 
 dotenv.config();
 
@@ -270,6 +271,40 @@ app.post('/api/file/action', async (req, res) => {
       error: 'Ошибка при обработке файла',
       details: error.message
     });
+  }
+});
+
+// === TTS endpoint (OpenAI) ===
+app.post('/api/tts', async (req, res) => {
+  try {
+    const { text, voice = 'alloy' } = req.body;
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({ error: 'Text is required' });
+    }
+    if (text.length > 4096) {
+      return res.status(400).json({ error: 'Text too long (max 4096 chars)' });
+    }
+    const allowedVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
+    const selectedVoice = allowedVoices.includes(voice.toLowerCase()) ? voice.toLowerCase() : 'alloy';
+    const response = await openai.audio.speech.create({
+      model: 'tts-1',
+      input: text,
+      voice: selectedVoice,
+      response_format: 'mp3'
+    });
+    const fileName = `tts-${Date.now()}.mp3`;
+    const filePath = path.join(UPLOADS_DIR, fileName);
+    const stream = response.body;
+    const fileStream = fs.createWriteStream(filePath);
+    await new Promise((resolve, reject) => {
+      stream.pipe(fileStream);
+      stream.on('end', resolve);
+      stream.on('error', reject);
+    });
+    res.json({ url: `/uploads/${fileName}` });
+  } catch (error) {
+    console.error('TTS error:', error);
+    res.status(500).json({ error: 'Ошибка при генерации озвучки', details: error.message });
   }
 });
 
