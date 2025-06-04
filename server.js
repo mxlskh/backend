@@ -6,7 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { OpenAI } from 'openai';
 import fetch from 'node-fetch';
-import pdfParse from 'pdf-parse';
+import { PDFExtract } from 'pdf.js-extract';
 import { PDFDocument } from 'pdf-lib';
 import dotenv from 'dotenv';
 
@@ -31,6 +31,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const pdfExtract = new PDFExtract();
 
 // Генерация изображения через DALL-E
 app.post('/api/generate-image', async (req, res) => {
@@ -117,8 +118,8 @@ app.post('/api/file/action', async (req, res) => {
     if (ext === '.pdf') {
       try {
         const dataBuffer = fs.readFileSync(filePath);
-        const pdfData = await pdfParse(dataBuffer);
-        const originalText = pdfData.text;
+        const pdfData = await pdfExtract.extractBuffer(dataBuffer);
+        const originalText = pdfData.pages.map(page => page.content.map(item => item.str).join(' ')).join('\n');
 
         if (!originalText.trim()) {
           return res.status(400).json({ error: 'Не удалось извлечь текст из PDF' });
