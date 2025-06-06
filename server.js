@@ -317,6 +317,50 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
+// Поиск изображений через DuckDuckGo (прокси)
+app.get('/api/search-images', async (req, res) => {
+  try {
+    const query = req.query.q;
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return res.status(400).json({ error: 'Query is required' });
+    }
+    console.log('[DuckDuckGo] Поиск изображений:', query);
+    // Получаем vqd
+    const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`;
+    const resp = await fetch(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        Accept: 'text/html',
+      },
+    });
+    if (!resp.ok) return res.status(500).json({ error: 'Failed to get vqd' });
+    const html = await resp.text();
+    const match = html.match(/vqd=['"]([^'"]+)['"]/);
+    const vqd = match ? match[1] : null;
+    if (!vqd) return res.status(500).json({ error: 'Failed to extract vqd' });
+    // Получаем картинки
+    const apiUrl = `https://duckduckgo.com/i.js?l=ru-ru&o=json&q=${encodeURIComponent(query)}&vqd=${vqd}`;
+    const imgResp = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        Accept: 'application/json',
+      },
+    });
+    if (!imgResp.ok) return res.status(500).json({ error: 'DuckDuckGo returned error' });
+    const json = await imgResp.json();
+    const results = json.results || [];
+    const urls = results
+      .map(r => r.image)
+      .filter(u => typeof u === 'string' && u.startsWith('https://'))
+      .slice(0, 3);
+    console.log('[DuckDuckGo] Найдено url:', urls);
+    res.json({ urls });
+  } catch (error) {
+    console.error('[DuckDuckGo] Ошибка поиска:', error);
+    res.status(500).json({ error: 'Ошибка при поиске изображений', details: error.message });
+  }
+});
+
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.get('/', (req, res) => res.send('File AI backend is running!'));
 app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
