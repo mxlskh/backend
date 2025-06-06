@@ -116,9 +116,31 @@ app.post('/api/generate-image', async (req, res) => {
       return res.status(400).json({ error: 'Prompt is required' });
     }
 
+    // Перевод prompt на английский через OpenAI GPT-3.5
+    let promptEn = prompt;
+    try {
+      // Проверяем, есть ли русские буквы
+      if (/[а-яА-ЯёЁ]/.test(prompt)) {
+        const translation = await openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: 'Переведи на английский для генерации изображения в DALL-E, без лишних пояснений.' },
+            { role: 'user', content: prompt }
+          ],
+          max_tokens: 100,
+        });
+        const translated = translation.choices[0]?.message?.content?.trim();
+        if (translated) promptEn = translated;
+        console.log('Prompt translated to EN:', promptEn);
+      }
+    } catch (e) {
+      console.error('Prompt translation error:', e);
+      // fallback: используем оригинальный prompt
+    }
+
     const response = await openai.images.generate({
       model: "dall-e-3",
-      prompt: prompt,
+      prompt: promptEn,
       n: 1,
       size: "1024x1024",
       quality: "standard",
